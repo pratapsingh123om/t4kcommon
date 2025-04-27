@@ -9,3 +9,6 @@
 #else
 #define ICONV_CONST
 #endif
+
+/* Unicode string handling configuration */
+#define GNULIB_UNISTR_U8_MBTOUC_UNSAFE 1

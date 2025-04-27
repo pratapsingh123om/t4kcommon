@@ -9,7 +9,7 @@ Wenyuan Guo, Brendan Luchen.
 Project email: <tuxmath-devel@lists.sourceforge.net>
 Project website: http://tux4kids.alioth.debian.org
 
-t4k_loaders.c is part of the t4k_common library.
+t4k_common is part of the t4k_common library.
 
 t4k_common is free software: you can redistribute it and/or modify
 it under the terms of the GNU General Public License as published by
@@ -220,21 +220,19 @@ SDL_Surface* load_svg(const char* file_name, int width, int height, const char* 
 
     DEBUGMSG(debug_loaders, "load_svg(): loading %s\n", file_name);
 
-    rsvg_init();
+    #if !GLIB_CHECK_VERSION(2,35,0)
+    g_type_init();
+    #endif
 
     file_handle = rsvg_handle_new_from_file(file_name, NULL);
     if(NULL == file_handle)
     {
 	DEBUGMSG(debug_loaders, "load_svg(): file %s not found\n", file_name);
-	rsvg_term();
 	return NULL;
     }
 
     dest = render_svg_from_handle(file_handle, width, height, layer_name);
-
     g_object_unref(file_handle);
-    rsvg_term();
-
     return dest;
 }
 
@@ -247,13 +245,14 @@ sprite* load_svg_sprite(const char* file_name, int width, int height)
 
     DEBUGMSG(debug_loaders, "load_svg_sprite(): loading sprite from %s, width = %d, height = %d\n", file_name, width, height);
 
-    rsvg_init();
+    #if !GLIB_CHECK_VERSION(2,35,0)
+    g_type_init();
+    #endif
 
     file_handle = rsvg_handle_new_from_file(file_name, NULL);
     if(NULL == file_handle)
     {
 	DEBUGMSG(debug_loaders, "load_svg_sprite(): file %s not found\n", file_name);
-	rsvg_term();
 	return NULL;
     }
 
@@ -261,7 +260,6 @@ sprite* load_svg_sprite(const char* file_name, int width, int height)
     if (new_sprite == NULL)
     {
         DEBUGMSG(debug_loaders, "malloc(): can't allocate memory for a new sprite\n");
-        rsvg_term();
         return NULL;
     }
     new_sprite->default_img = render_svg_from_handle(file_handle, width, height, "#default");
@@ -277,8 +275,6 @@ sprite* load_svg_sprite(const char* file_name, int width, int height)
     }
 
     g_object_unref(file_handle);
-    rsvg_term();
-
     return new_sprite;
 }
 
@@ -286,27 +282,27 @@ sprite* load_svg_sprite(const char* file_name, int width, int height)
    If width or height is negative no resizing is applied. */
 SDL_Surface* render_svg_from_handle(RsvgHandle* file_handle, int width, int height, const char* layer_name)
 {
-    RsvgDimensionData dimensions;
+    gdouble dimensions_width, dimensions_height;
     cairo_surface_t* temp_surf;
     cairo_t* context;
     SDL_Surface* dest;
     float scale_x, scale_y;
     Uint32 Rmask, Gmask, Bmask, Amask;
 
-    rsvg_handle_get_dimensions(file_handle, &dimensions);
+    rsvg_handle_get_intrinsic_size_in_pixels(file_handle, &dimensions_width, &dimensions_height);
 
     /* set scale_x and scale_y */
     if(width < 0 || height < 0)
     {
-	width = dimensions.width;
-	height = dimensions.height;
+	width = (int)dimensions_width;
+	height = (int)dimensions_height;
 	scale_x = 1.0;
 	scale_y = 1.0;
     }
     else
     {
-	scale_x = (float)width / dimensions.width;
-	scale_y = (float)height / dimensions.height;
+	scale_x = (float)width / dimensions_width;
+	scale_y = (float)height / dimensions_height;
     }
 
     /* set color masks */
@@ -322,8 +318,8 @@ SDL_Surface* render_svg_from_handle(RsvgHandle* file_handle, int width, int heig
     DEBUGMSG(debug_loaders, "render_svg_from_handle(): color masks: R=%u, G=%u, B=%u, A=%u\n",
 	    Rmask, Gmask, Bmask, Amask);
 
-    dest = SDL_CreateRGBSurface(SDL_SWSURFACE | SDL_SRCALPHA,
-	    width, height, T4K_GetScreen()->format->BitsPerPixel, Rmask, Gmask, Bmask, Amask);
+    dest = SDL_CreateRGBSurface(SDL_SWSURFACE,
+	    width, height, 32, Rmask, Gmask, Bmask, Amask);
 
     SDL_LockSurface(dest);
     temp_surf = cairo_image_surface_create_for_data(dest->pixels,
@@ -340,21 +336,50 @@ SDL_Surface* render_svg_from_handle(RsvgHandle* file_handle, int width, int heig
     cairo_scale(context, scale_x, scale_y);
 
     /* render appropriate layer */
-    rsvg_handle_render_cairo_sub(file_handle, context, layer_name);
+    if (layer_name) {
+        GError *error = NULL;
+        RsvgRectangle viewport = {
+            .x = 0,
+            .y = 0,
+            .width = width,
+            .height = height
+        };
+        rsvg_handle_render_layer(file_handle, context, layer_name, &viewport, &error);
+        if (error) {
+            g_error_free(error);
+            DEBUGMSG(debug_loaders, "render_svg_from_handle(): error rendering layer %s\n", layer_name);
+        }
+    }
+    else {
+        GError *error = NULL;
+        RsvgRectangle viewport = {
+            .x = 0,
+            .y = 0,
+            .width = width,
+            .height = height
+        };
+        rsvg_handle_render_document(file_handle, context, &viewport, &error);
+        if (error) {
+            g_error_free(error);
+            DEBUGMSG(debug_loaders, "render_svg_from_handle(): error rendering document\n");
+        }
+    }
 
     SDL_UnlockSurface(dest);
     cairo_surface_destroy(temp_surf);
     cairo_destroy(context);
+
+    if (dest)
+        SDL_SetSurfaceBlendMode(dest, SDL_BLENDMODE_BLEND);
 
     return dest;
 }
 
 void get_svg_dimensions(const char* file_name, int* width, int* height)
 {
-
     int index = SVGInfoIndex(file_name);
     RsvgHandle* file_handle;
-    RsvgDimensionData dimensions;
+    gdouble dimensions_width, dimensions_height;
 
     if (index != -1) //look for cached dimensions
     {
@@ -363,26 +388,23 @@ void get_svg_dimensions(const char* file_name, int* width, int* height)
 	return;
     }
 
-    //FIXME do we really need to initialize and terminate RSVG every time?
-    rsvg_init();
+    #if !GLIB_CHECK_VERSION(2,35,0)
+    g_type_init();
+    #endif
 
     file_handle = rsvg_handle_new_from_file(file_name, NULL);
     if(file_handle == NULL)
     {
 	DEBUGMSG(debug_loaders, "get_svg_dimensions(): file %s not found\n", file_name);
-	rsvg_term();
 	return;
     }
 
-    rsvg_handle_get_dimensions(file_handle, &dimensions);
+    rsvg_handle_get_intrinsic_size_in_pixels(file_handle, &dimensions_width, &dimensions_height);
 
-    *width = dimensions.width;
-    *height = dimensions.height;
+    *width = (int)dimensions_width;
+    *height = (int)dimensions_height;
 
     g_object_unref(file_handle);
-
-    //FIXME see above
-    rsvg_term();
 
     saveSVGInfo(file_name, *width, *height); //save dimensions for quick access
 }
@@ -616,36 +638,27 @@ void fit_in_rectangle(int* width, int* height, int max_width, int max_height)
 
 SDL_Surface* set_format(SDL_Surface* img, int mode)
 {
-    switch (mode & IMG_MODES)
+    SDL_Surface* new_img = NULL;
+    if (!img)
+        return NULL;
+
+    switch(mode)
     {
-	case IMG_REGULAR:
-	    {
-		DEBUGMSG(debug_loaders, "set_format(): handling IMG_REGULAR mode.\n");
-		return SDL_DisplayFormat(img);
-	    }
-
-	case IMG_ALPHA:
-	    {
-		DEBUGMSG(debug_loaders, "set_format(): handling IMG_ALPHA mode.\n");
-		return SDL_DisplayFormatAlpha(img);
-	    }
-
-	case IMG_COLORKEY:
-	    {
-		DEBUGMSG(debug_loaders, "set_format(): handling IMG_COLORKEY mode.\n");
-		SDL_LockSurface(img);
-		SDL_SetColorKey(img, (SDL_SRCCOLORKEY | SDL_RLEACCEL),
-			SDL_MapRGB(img->format, 255, 255, 0));
-		return SDL_DisplayFormat(img);
-	    }
-
-	default:
-	    {
-		DEBUGMSG(debug_loaders, "set_format(): Image mode not recognized\n");
-	    }
+        case MEMORY_FORMAT:
+            new_img = SDL_ConvertSurfaceFormat(img, SDL_PIXELFORMAT_RGBA32, 0);
+            break;
+        case ALPHA_FORMAT:
+            new_img = SDL_ConvertSurfaceFormat(img, SDL_PIXELFORMAT_RGBA32, 0);
+            break;
+        case CK_FORMAT:
+            SDL_SetColorKey(img, SDL_TRUE | SDL_RLEACCEL,
+                          SDL_MapRGB(img->format, 0xff, 0, 0xff));
+            new_img = SDL_ConvertSurfaceFormat(img, SDL_PIXELFORMAT_RGBA32, 0);
+            break;
+        default:
+            return NULL;
     }
-
-    return NULL;
+    return new_img;
 }
 
 
@@ -666,8 +679,9 @@ SDL_Surface* T4K_LoadBkgd(const char* file_name, int width, int height)
     }
 
     /* turn off transparency, since it's the background */
-    SDL_SetAlpha(orig, SDL_RLEACCEL, SDL_ALPHA_OPAQUE);
-    final_pic = SDL_DisplayFormat(orig); /* optimize the format */
+    SDL_SetSurfaceAlphaMod(orig, SDL_ALPHA_OPAQUE);
+    SDL_SetSurfaceRLE(orig, SDL_TRUE);
+    final_pic = SDL_ConvertSurfaceFormat(orig, SDL_PIXELFORMAT_RGBA32, 0);
     SDL_FreeSurface(orig);
 
     return final_pic;

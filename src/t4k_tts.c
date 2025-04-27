@@ -26,9 +26,13 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.  */
 
 #include "t4k_globals.h"
 #include "t4k_common.h"
+#include <SDL2/SDL.h>
+#include <SDL2/SDL_thread.h>
+#include <wchar.h>
 
-
-#include "SDL_thread.h"
+// Forward declarations
+void T4K_Tts_cancel(void);
+void T4K_Tts_wait(void);
 
 SDL_Thread *tts_thread;
 int text_to_speech_status;
@@ -134,27 +138,29 @@ espeak_SetParameter(espeakPITCH,pitch,0);
  * 
  * if mode = APPEND then wait till speaking is finished 
  * then read the new text */
-void T4K_Tts_say(int rate,int pitch,int mode, const char* text, ...){
-	tts_argument data_to_pass;
-	
-	
-	if (text_to_speech_status){
-	
-	T4K_Tts_set_rate(rate);
-    T4K_Tts_set_pitch(pitch);
+void T4K_Tts_say(int rate, int pitch, int mode, const char* text, ...) {
+    tts_argument data_to_pass;
+    
+    if (text_to_speech_status) {
+        T4K_Tts_set_rate(rate);
+        T4K_Tts_set_pitch(pitch);
 
-	//Getting the formated text
-	va_list list;
-	va_start(list,text);
-	vsprintf(data_to_pass.text,text,list);
-	va_end(list);
-	
-	//Passing mode
-	data_to_pass.mode = mode;
-	
-	//Calling threded function to say.	
-	tts_thread = SDL_CreateThread(tts_thread_func, &data_to_pass);
-	}
+        // Convert format string to wide string first
+        wchar_t wformat[10000];  // Match the size in header
+        mbstowcs(wformat, text, sizeof(wformat)/sizeof(wchar_t));
+
+        // Getting the formatted text
+        va_list list;
+        va_start(list, text);
+        vswprintf(data_to_pass.text, sizeof(data_to_pass.text)/sizeof(wchar_t), wformat, list);
+        va_end(list);
+        
+        // Passing mode
+        data_to_pass.mode = mode;
+        
+        // Calling threaded function to say
+        tts_thread = SDL_CreateThread(tts_thread_func, "TTS Thread", &data_to_pass);
+    }
 }	
 
 
@@ -174,20 +180,24 @@ int text_to_speech_speaking;
 int tts_thread_func(void *arg)
 {
 	tts_argument recived = *((tts_argument*)(arg));
-	fprintf(stderr,"\nSPD : %s - %d",recived.text,recived.mode);
+	fprintf(stderr,"\nSPD : %ls - %d", recived.text, recived.mode);
 	
 	text_to_speech_speaking = 0;
 	
 	if (recived.mode == INTERRUPT)
 	{	
 		T4K_Tts_cancel();
-		spd_say(spd_connection, 1, recived.text);
+		char temp_text[1024];
+		wcstombs(temp_text, recived.text, sizeof(temp_text));
+		spd_say(spd_connection, 1, temp_text);
 	}
 	else
 	{
 
 		
-		spd_say(spd_connection, 1, recived.text);
+		char temp_text[1024];
+		wcstombs(temp_text, recived.text, sizeof(temp_text));
+		spd_say(spd_connection, 1, temp_text);
 		
 	}
 	
@@ -253,7 +263,7 @@ int T4K_Tts_set_voice(char voice_name[]){
 void T4K_Tts_stop(){
 	if (tts_thread)
 	{
-		SDL_KillThread(tts_thread);
+		SDL_WaitThread(tts_thread, NULL);
 		tts_thread = NULL;
 		spd_cancel(spd_connection);
 		text_to_speech_speaking = 1;
@@ -306,14 +316,14 @@ void T4K_Tts_say(int rate,int pitch,int mode, const char* text, ...){
 	//Getting the formated text
 	va_list list;
 	va_start(list,text);
-	vsprintf(data_to_pass.text,text,list);
+	vswprintf(data_to_pass.text, sizeof(data_to_pass.text)/sizeof(wchar_t), text, list);
 	va_end(list);
 	
 	//Passing mode
 	data_to_pass.mode = mode;
 	
 	//Calling threded function to say.	
-	tts_thread = SDL_CreateThread(tts_thread_func, &data_to_pass);
+	tts_thread = SDL_CreateThread(tts_thread_func, "TTS Thread", &data_to_pass);
 	}
 }	
 

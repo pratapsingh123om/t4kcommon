@@ -31,11 +31,20 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.  */
 
 #include <libxml/parser.h>
 #include <libxml/tree.h>
+#include <SDL2/SDL.h>
 
 #include "t4k_globals.h"
 #include "t4k_common.h"
 
+extern SDL_Window* window;  // Global window reference
+
 #define MENU_DIR "menus"
+
+/* SDL2 compatibility defines */
+#define SDL_SRCALPHA SDL_SRCALPHA_DEPRECATED
+#define SDL_GRAB_OFF 0
+#define SDL_BUTTON_WHEELUP 4
+#define SDL_BUTTON_WHEELDOWN 5
 
 
 /*
@@ -145,14 +154,14 @@ const int min_font_size = 8, default_font_size = 20, max_font_size = 33;
 MenuNode*       create_empty_node();
 char*           get_attribute_name(const char* token);
 char*           get_attribute_value(const char* token);
-void            free_menu(MenuNode* menu);
+static void    free_menu(MenuNode* menu);
 
 SDL_Surface**   render_buttons(MenuNode* menu, bool selected);
 char*           find_title_length(MenuNode* menu, int* length);
 char*           find_longest_text(MenuNode* menu, int* length);
 int             find_longest_menu_page(MenuNode* menu);
-void            set_font_size();
-void            prerender_menu(MenuNode* menu);
+static void    set_font_size(bool uniform);
+static void    prerender_menu(MenuNode* menu);
 int		min(int a, int b);
 int		max(int a, int b);
 void            prerender_panel();
@@ -230,7 +239,8 @@ MenuNode *menu_TranslateNode(xmlNode *node) {
     }
 
     if(node->type == XML_ELEMENT_NODE) {
-	xmlAttr *current, *child;
+	xmlAttr *current;
+	xmlNode *child;
 	tnode = create_empty_node();
 
 	for(current = node->properties; current; current = current->next) {
@@ -264,7 +274,7 @@ MenuNode *menu_TranslateNode(xmlNode *node) {
 	    i = 0;
 	    for(child = node->children; child; child = child->next) {
 		if(child->type == XML_ELEMENT_NODE) {
-		    tnode->submenu[i++] = menu_TranslateNode(child);
+		    tnode->submenu[i++] = menu_TranslateNode((xmlNode*)child);
 		}
 	    }
 	}
@@ -295,7 +305,7 @@ MenuNode *menu_LoadFile(char *file) {
 }
 
 /* recursively free all non-NULL pointers in a menu tree */
-void free_menu(MenuNode* menu)
+static void free_menu(MenuNode* menu)
 {
     int i;
 
@@ -449,13 +459,12 @@ int T4K_RunMenu(int index, bool return_choice, void (*draw_background)(), int (*
     Uint32 frame_start = 0;       //For keeping frame rate constant
     Uint32 frame_now = 0;
     Uint32 frame_counter = 0;
-    //int loc = -1;                  //The currently selected menu item
     int loc = 0;                  //Start with focus on first item
     int old_loc = 0;
     int click_flag = 1;
     int using_scroll = 0;
 
-    internal_res_switch_handler(&T4K_PrerenderAll);
+    internal_res_switch_handler((ResSwitchCallback)T4K_PrerenderAll);
 
     for(;;) /* one loop body execution for one menu page */
     {
@@ -508,9 +517,13 @@ int T4K_RunMenu(int index, bool return_choice, void (*draw_background)(), int (*
 
 	prerender_panel();
 
-	SDL_UpdateRect(T4K_GetScreen(), 0, 0, 0, 0);
+	SDL_Rect update_all = {0, 0, 0, 0};
+	T4K_UpdateRect(T4K_GetScreen(), &update_all);
 
-	SDL_WM_GrabInput(SDL_GRAB_OFF);
+	// Use global window variable directly
+	if (window) {
+	    SDL_SetWindowGrab(window, SDL_FALSE);
+	}
 
 	while (SDL_PollEvent(&event));  // clear pending events
 
@@ -860,7 +873,8 @@ int T4K_RunMenu(int index, bool return_choice, void (*draw_background)(), int (*
 			if(menu->submenu[menu->first_entry + old_loc]->icon)
 			    SDL_BlitSurface(menu->submenu[menu->first_entry + old_loc]->icon->default_img,
 				    NULL, T4K_GetScreen(), &menu->submenu[menu->first_entry + old_loc]->icon_rect);
-			SDL_UpdateRect(T4K_GetScreen(), tmp_rect.x, tmp_rect.y, tmp_rect.w, tmp_rect.h);
+			SDL_Rect update_rect = {tmp_rect.x, tmp_rect.y, tmp_rect.w, tmp_rect.h};
+			T4K_UpdateRect(T4K_GetScreen(), &update_rect);
 		    }
 
 		    /* Announce the menu item if index is not out of bonds */
@@ -886,11 +900,12 @@ int T4K_RunMenu(int index, bool return_choice, void (*draw_background)(), int (*
 				    NULL, T4K_GetScreen(), &menu->submenu[menu->first_entry + loc]->icon_rect);
 			    menu->submenu[menu->first_entry + loc]->icon->cur = 0;
 			}
-			SDL_UpdateRect(T4K_GetScreen(), tmp_rect.x, tmp_rect.y, tmp_rect.w, tmp_rect.h);
+			SDL_Rect update_rect = {tmp_rect.x, tmp_rect.y, tmp_rect.w, tmp_rect.h};
+			T4K_UpdateRect(T4K_GetScreen(), &update_rect);
 
 			// Set and render new description text
 			{
-			    char *desc = _(menu->submenu[loc + menu->first_entry]->desc);
+			    const char* desc = _(menu->submenu[loc + menu->first_entry]->desc);
 			    char out[256];
 			    int char_width;
 			    // Clear old rendered text:
@@ -906,10 +921,13 @@ int T4K_RunMenu(int index, bool return_choice, void (*draw_background)(), int (*
 			}
 
 			if(desc_prerendered) {
-			    SDL_Rect pos = {T4K_GetScreen()->w * desc_panel_pos[0], T4K_GetScreen()->h * desc_panel_pos[1]};
+			    SDL_Rect pos = {T4K_GetScreen()->w * desc_panel_pos[0], 
+					  T4K_GetScreen()->h * desc_panel_pos[1]};
 			    SDL_BlitSurface(desc_panel, NULL, T4K_GetScreen(), &pos);
 			    SDL_BlitSurface(desc_prerendered, NULL, T4K_GetScreen(), &pos);
-			    SDL_Flip(T4K_GetScreen());
+			    if (window) {
+				SDL_UpdateWindowSurface(window);
+			    }
 			}
 
 		    }
@@ -1016,7 +1034,7 @@ int T4K_RunMenu(int index, bool return_choice, void (*draw_background)(), int (*
 			/* Set and render new description text when menu is scrolled - Nalin */
 			if(action == PAGEUP || action == PAGEDOWN)
 			{
-				char *desc = _(menu->submenu[loc + menu->first_entry]->desc);
+				const char* desc = _(menu->submenu[loc + menu->first_entry]->desc);
 				char out[256];
 				int char_width;
 				// Clear old rendered text:
@@ -1062,10 +1080,13 @@ int T4K_RunMenu(int index, bool return_choice, void (*draw_background)(), int (*
 	    handle_animations();
 
 	    if(desc_prerendered) {
-		SDL_Rect pos = {T4K_GetScreen()->w * desc_panel_pos[0], T4K_GetScreen()->h * desc_panel_pos[1]};
+		SDL_Rect pos = {T4K_GetScreen()->w * desc_panel_pos[0], 
+					  T4K_GetScreen()->h * desc_panel_pos[1]};
 		SDL_BlitSurface(desc_panel, NULL, T4K_GetScreen(), &pos);
 		SDL_BlitSurface(desc_prerendered, NULL, T4K_GetScreen(), &pos);
-		SDL_Flip(T4K_GetScreen());
+		if (window) {
+		    SDL_UpdateWindowSurface(window);
+		}
 	    }
 
 	    /* Wait so we keep frame rate constant: */
@@ -1126,7 +1147,7 @@ SDL_Surface** render_buttons(MenuNode* menu, bool selected)
     for (i = 0; i < items; i++)
     {
 	curr_rect = menu->submenu[menu->first_entry + i]->button_rect;
-	menu_items[i] = SDL_CreateRGBSurface(SDL_SWSURFACE|SDL_SRCALPHA,
+	menu_items[i] = SDL_CreateRGBSurface(SDL_SWSURFACE,
 		curr_rect.w,
 		curr_rect.h,
 		32,
@@ -1154,7 +1175,7 @@ SDL_Surface** render_buttons(MenuNode* menu, bool selected)
 
 /* recursively load sprites and calculate button rects
    to fit into current screen */
-void prerender_menu(MenuNode* menu)
+static void prerender_menu(MenuNode* menu)
 {
     SDL_Surface* temp_surf;
     MenuNode* curr_node;
@@ -1479,7 +1500,9 @@ void T4K_PrerenderAll()
     for(i = 0; i < N_OF_MENUS; i++)
 	if(menus[i])
 	    T4K_PrerenderMenu(i);
-    SDL_UpdateRect(T4K_GetScreen(), 0, 0, 0, 0);
+
+    SDL_Rect update_rect = {0, 0, 0, 0};
+    T4K_UpdateRect(T4K_GetScreen(), &update_rect);
 }
 
 int min(int a, int b)

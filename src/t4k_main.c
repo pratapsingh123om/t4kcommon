@@ -119,29 +119,27 @@ void CleanupT4KCommon(void)
 }
 
 
-int T4K_HandleStdEvents (const SDL_Event* event)
+int T4K_HandleStdEvents(const SDL_Event* event)
 {
     int ret = 0;
 
     if (event->type != SDL_KEYDOWN)
-	return 0;
+        return 0;
 
-    SDLKey key = event->key.keysym.sym;
+    SDL_Keycode key = event->key.keysym.sym;
 
     /* Toggle screen mode: */
     if (key == SDLK_F10)
     {
-	//    Opts_SetGlobalOpt(FULLSCREEN, !Opts_GetGlobalOpt(FULLSCREEN) );
-	T4K_SwitchScreenMode();
-	//    game_recalc_positions();
-	ret = 1;
+        T4K_SwitchScreenMode();
+        ret = 1;
     }
 
     /* Toggle music: */
 #ifndef NOSOUND
     else if (key == SDLK_F11)
     {
-	T4K_AudioToggle();
+        T4K_AudioToggle();
     }
 #endif
 

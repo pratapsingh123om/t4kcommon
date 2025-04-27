@@ -49,8 +49,8 @@
 //!     See COPYING file that comes with this distribution.
 //!
 
-#ifndef TUX4KIDS_COMMON_H
-#define TUX4KIDS_COMMON_H
+#ifndef T4K_COMMON_H
+#define T4K_COMMON_H
 
 #include <sys/types.h>
 #include <sys/stat.h>
@@ -223,7 +223,8 @@ enum
 //! \enum
 //!     MFStrategy
 //!
-//! Strategies for determining menu font sizes.
+//! \brief
+//!     Strategies for determining menu font sizes.
 //!
 typedef enum
 {
@@ -233,13 +234,12 @@ typedef enum
 }
 MFStrategy;
 
-// from tk4_loaders.c
+/* Image loading modes: */
 #define IMG_REGULAR         0x01
-#define IMG_COLORKEY        0x02
-#define IMG_ALPHA           0x04
-#define IMG_MODES           0x07
-
-#define IMG_NOT_REQUIRED    0x10
+#define IMG_COLORKEY       0x02
+#define IMG_ALPHA          0x04
+#define IMG_MODES          (IMG_REGULAR | IMG_ALPHA | IMG_COLORKEY)
+#define IMG_NOT_REQUIRED   0x10
 #define IMG_NO_PNG_FALLBACK 0x20
 
 #define MAX_LINES           128 //!< Maximum lines to wrap.
@@ -951,7 +951,7 @@ void T4K_OnResolutionSwitch( ResSwitchCallback callback );
 //! \return 
 //!     The event type received.
 //!
-SDL_EventType T4K_WaitForEvent( SDL_EventMask events );
+SDL_EventType T4K_WaitForEvent(Uint32 events);
 
 //==============================================================================
 //
@@ -2099,5 +2099,10 @@ int T4K_scandir( const char*      dirname,
                  int (*dcomp)(const void *, const void *)
                );
 
-#endif /* TUX4KIDS_COMMON_H */
+/* Surface format modes */
+#define MEMORY_FORMAT   0x01
+#define ALPHA_FORMAT    0x02
+#define CK_FORMAT      0x04
+
+#endif /* T4K_COMMON_H */
 
